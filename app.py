@@ -28,6 +28,8 @@ from matplotlib.figure import Figure
 from PIL import Image
 from PIL.ExifTags import TAGS
 
+Image.MAX_IMAGE_PIXELS = None
+
 # ─────────────────────────────────────────────
 # 定数
 # ─────────────────────────────────────────────
@@ -107,9 +109,8 @@ OVERLAY  = "#45475a"
 # 機材名の欠損表示（集計・フィルター・グラフで統一）
 UNKNOWN_EQUIPMENT = "Unknown (不明)"
 
-# 左パネル：Listbox とスクロールバーで文字が潰れないよう幅と余白を確保
 LEFT_PANEL_WIDTH = 322
-LISTBOX_PADX = (10, 8)  # (左端からの余白, スクロールバーとの隙間)
+LISTBOX_PADX = (10, 8)
 
 
 # ─────────────────────────────────────────────
@@ -153,6 +154,7 @@ def _empty_exif_dict() -> dict:
         "img_width": None,
         "img_height": None,
         "orientation": None,
+        "aspect_ratio": None,
     }
 
 
@@ -168,6 +170,45 @@ def _logical_dimensions(img: Image.Image) -> tuple[int, int]:
     except Exception:
         pass
     return w, h
+
+
+_ASPECT_RATIO_CANDIDATES = (
+    (1, 1),
+    (2, 3),
+    (3, 2),
+    (3, 4),
+    (4, 3),
+    (4, 5),
+    (5, 4),
+    (5, 7),
+    (7, 5),
+    (9, 16),
+    (16, 9),
+    (10, 16),
+    (16, 10),
+    (11, 14),
+    (14, 11),
+)
+
+
+def _format_aspect_ratio(w, h) -> str | None:
+    try:
+        wi, hi = int(w), int(h)
+    except (TypeError, ValueError):
+        return None
+    if wi <= 0 or hi <= 0:
+        return None
+    g = math.gcd(wi, hi)
+    rw, rh = wi // g, hi // g
+    if max(rw, rh) <= 240:
+        return f"{rw}:{rh}"
+    r = wi / hi
+    for a, b in _ASPECT_RATIO_CANDIDATES:
+        c = a / b
+        denom = r if r > 1e-12 else 1e-12
+        if abs(r - c) / denom < 0.0025:
+            return f"{a}:{b}"
+    return f"{rw}:{rh}"
 
 
 def _normalize_iso(val):
@@ -297,7 +338,6 @@ def _from_exifread(filepath: str) -> dict:
         data["lens_model"] = str(lens).strip() or None
 
     try:
-        # RAW特有の幅・高さタグも検索対象に追加
         w_tag = _exifread_first_tag(tags, "EXIF ExifImageWidth", "Image ImageWidth", "Image DefaultCropSize", "MakerNote ImageWidth")
         h_tag = _exifread_first_tag(tags, "EXIF ExifImageLength", "Image ImageLength", "Image ImageHeight", "Image DefaultCropLength", "MakerNote ImageLength")
         ori_tag = _exifread_first_tag(tags, "Image Orientation")
@@ -338,7 +378,6 @@ def _from_exifread(filepath: str) -> dict:
             else:
                 data["orientation"] = "square"
         elif ori_tag is not None:
-            # 幅・高さが取得できなくても Orientation があれば構図だけ推定（RAW 向け）
             if ori in (5, 6, 7, 8):
                 data["orientation"] = "portrait"
             elif ori in (1, 2, 3, 4):
@@ -385,7 +424,8 @@ def get_exif_data(filepath: str) -> dict:
             raw = img._getexif()
             if raw:
                 for k, v in _from_pillow_exif(raw).items():
-                    data[k] = v
+                    if v is not None:
+                        data[k] = v
     except Exception:
         pass
 
@@ -393,6 +433,17 @@ def get_exif_data(filepath: str) -> dict:
     if need_exifread:
         extra = _from_exifread(filepath)
         _merge_exif(data, extra)
+
+    iw, ih = data.get("img_width"), data.get("img_height")
+    if iw is not None and ih is not None:
+        data["aspect_ratio"] = _format_aspect_ratio(iw, ih)
+        if data.get("orientation") is None:
+            if iw > ih:
+                data["orientation"] = "landscape"
+            elif ih > iw:
+                data["orientation"] = "portrait"
+            else:
+                data["orientation"] = "square"
 
     return data
 
@@ -842,7 +893,7 @@ class CameraStatsApp:
         keys = ["filepath", "datetime", "camera_make", "camera_model", "lens_model",
                 "focal_length", "focal_length_35mm", "zoom_category",
                 "iso", "aperture", "shutter_speed", "shutter_speed_str",
-                "img_width", "img_height", "orientation"]
+                "img_width", "img_height", "aspect_ratio", "orientation"]
         
         try:
             with open(filepath, mode="w", newline="", encoding="utf-8-sig") as f:
@@ -1507,7 +1558,6 @@ class CameraStatsApp:
             mpatches.Patch(color="#f38ba8", label="望遠 (136-300mm)"),
             mpatches.Patch(color="#cba6f7", label="超望遠 (300mm~)"),
         ]
-        # 軸の legend は Tk 再描画で重ね塗りされやすいので Figure 座標で1回だけ付与
         while fig.legends:
             fig.legends[-1].remove()
         fig.legend(
