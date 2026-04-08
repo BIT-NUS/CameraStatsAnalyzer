@@ -135,6 +135,8 @@ def _ratio_to_float(val):
     try:
         if hasattr(val, "numerator"):
             return val.numerator / val.denominator if val.denominator else None
+        if isinstance(val, tuple) and len(val) == 2:
+            return float(val[0]) / float(val[1]) if val[1] else None
         return float(val)
     except Exception:
         return None
@@ -1321,7 +1323,7 @@ class CameraStatsApp:
         values = [counts[c[0]] for c in ZOOM_CATEGORIES if counts.get(c[0])]
         total  = sum(values)
         pcts   = [v / total * 100 for v in values]
-        clrs   = PALETTE[:len(names)]
+        clrs   = [PALETTE[i % len(PALETTE)] for i in range(len(names))]
 
         bars = ax.bar(range(len(names)), values, color=clrs,
                       edgecolor=BG, linewidth=0.8)
@@ -1618,7 +1620,7 @@ class CameraStatsApp:
         values = [grouped[s] for s in stops if s in grouped]
 
         bars = ax.bar(range(len(labels)), values,
-                      color=PALETTE[:len(labels)], edgecolor=BG, linewidth=0.6)
+                      color=[PALETTE[i % len(PALETTE)] for i in range(len(labels))], edgecolor=BG, linewidth=0.6)
         ax.set_xticks(range(len(labels)))
         ax.set_xticklabels(labels, rotation=30, ha="right")
         for bar, val in zip(bars, values):
@@ -1760,7 +1762,7 @@ class CameraStatsApp:
             names  = [n[:24] for n, _ in top]
             values = [v      for _, v in top]
             bars = ax.barh(range(len(names)), values,
-                           color=palette[:len(names)], edgecolor=BG, linewidth=0.6)
+                           color=[palette[i % len(palette)] for i in range(len(names))], edgecolor=BG, linewidth=0.6)
             ax.set_yticks(range(len(names)))
             ax.set_yticklabels(names, fontsize=9)
             ax.invert_yaxis()
